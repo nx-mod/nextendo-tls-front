@@ -15,8 +15,10 @@ package main
 import (
 	"bytes"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -136,10 +138,38 @@ func main() {
 		p.ServeHTTP(w, r)
 	})
 
+	// HTTP/1.1 only: Go offers h2 by default, and the console's browser applet completed the handshake and
+	// then dropped the connection without a request. nnAccount's libcurl uses HTTP/1.1 anyway.
+	// Each ClientHello and connection state is logged, so a client that gives up shows what it offered.
+	tlsConf := &tls.Config{
+		MinVersion: tls.VersionTLS10,
+		NextProtos: []string{"http/1.1"},
+		GetConfigForClient: func(hi *tls.ClientHelloInfo) (*tls.Config, error) {
+			log.Printf("hello from %s sni=%q versions=%x alpn=%q suites=%d", hi.Conn.RemoteAddr(), hi.ServerName, hi.SupportedVersions, hi.SupportedProtos, len(hi.CipherSuites))
+			return nil, nil
+		},
+	}
+	// TLSFRONT_MAX_TLS12=1: offer TLS 1.2 at most, for clients whose TLS 1.3 fails (the console's browser
+	// dropped every TLS 1.3 handshake right after the ClientHello).
+	if os.Getenv("TLSFRONT_MAX_TLS12") == "1" {
+		tlsConf.MaxVersion = tls.VersionTLS12
+		log.Printf("[tls-front] TLS 1.2 at most")
+	}
 	srv := &http.Server{
-		Addr:      addr,
-		Handler:   h,
-		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS10},
+		Addr:         addr,
+		Handler:      h,
+		TLSConfig:    tlsConf,
+		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){},
+		ConnState: func(c net.Conn, st http.ConnState) {
+			if st == http.StateActive || st == http.StateClosed || st == http.StateHijacked {
+				extra := ""
+				if tc, ok := c.(*tls.Conn); ok && st != http.StateClosed {
+					cs := tc.ConnectionState()
+					extra = fmt.Sprintf(" tls=%x alpn=%q", cs.Version, cs.NegotiatedProtocol)
+				}
+				log.Printf("conn %s %s%s", c.RemoteAddr(), st, extra)
+			}
+		},
 	}
 	log.Printf("[tls-front] écoute %s (cert=%s) account/baas", addr, cert)
 	log.Fatal(srv.ListenAndServeTLS(cert, key))
