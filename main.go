@@ -123,7 +123,7 @@ func main() {
 		switch {
 		case strings.HasSuffix(host, "baas.nintendo.com"):
 			p, which = baas, "baas"
-		case nnaccount != nil && (host == "api.accounts.nintendo.com" ||
+		case nnaccount != nil && (host == "api.accounts.nintendo.com" || host == "cdn.accounts.nintendo.com" ||
 			strings.HasPrefix(r.URL.Path, "/connect/") || r.URL.Path == "/1.0.0/certificates"):
 			p, which = nnaccount, "nnaccount"
 		case strings.HasPrefix(r.URL.Path, "/connect/"):
